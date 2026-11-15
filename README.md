@@ -1,0 +1,1 @@
+# solne-newsletter-api
