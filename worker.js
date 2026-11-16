@@ -8,7 +8,7 @@ const corsHeaders = {
 
 // Publicly hosted hero image URL (replace with your own if different)
 const HERO_URL =
-  "https://raw.githubusercontent.com/KonstantinosBatziakas/solne-clothes-web/main/images/newsletter-hero.jpg";
+  "https://pub-c419e9b2a9bf4e2ebf3a9d2011773a64.r2.dev/newsletter-hero.jpg";
 
 async function sign(email, secret) {
   const key = await crypto.subtle.importKey(
