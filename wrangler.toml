@@ -1,0 +1,13 @@
+name = "solne-newsletter-api"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# KV namespace for storing newsletter subscribers
+[[kv_namespaces]]
+binding = "SOLNE_SUBSCRIBERS"
+id = "86ce4b83d5b845c9ad289faddda64827"
+
+# Secrets (set via `npx wrangler secret put`):
+# - RESEND_API_KEY
+# - UNSUBSCRIBE_SECRET
+# - SENDER_EMAIL
