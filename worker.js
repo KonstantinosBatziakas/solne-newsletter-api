@@ -1,4 +1,10 @@
-import { welcomeHtml } from "./welcome-template.js";
+import {
+  welcomeHtml,
+  unsubPageHtml,
+  getSubject,
+  getUnsubDone,
+  getUnsubInvalid,
+} from "./welcome-template.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,7 +12,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-// Publicly hosted hero image URL (replace with your own if different)
 const HERO_URL =
   "https://pub-c419e9b2a9bf4e2ebf3a9d2011773a64.r2.dev/newsletter-hero.JPG";
 
@@ -22,6 +27,13 @@ async function sign(email, secret) {
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Detect language from Accept-Language header, default to Greek
+function detectLang(request) {
+  const accept = request.headers.get("Accept-Language") || "";
+  if (/^en/i.test(accept.trim()) || /en/i.test(accept)) return "en";
+  return "el";
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -34,7 +46,9 @@ export default {
     // POST /api/newsletter/subscribe
     if (request.method === "POST" && url.pathname === "/api/newsletter/subscribe") {
       try {
-        const { email } = await request.json();
+        const body = await request.json();
+        const email = body.email;
+        const lang = body.lang || detectLang(request);
 
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           return new Response(JSON.stringify({ error: "Valid email is required" }), {
@@ -46,10 +60,14 @@ export default {
         const normalizedEmail = email.toLowerCase();
         const key = `subscriber:${normalizedEmail}`;
 
-        // Store subscriber in KV
+        // Store subscriber in KV with language preference (remembered forever)
         await env.SOLNE_SUBSCRIBERS.put(
           key,
-          JSON.stringify({ email: normalizedEmail, subscribedAt: new Date().toISOString() })
+          JSON.stringify({
+            email: normalizedEmail,
+            lang,
+            subscribedAt: new Date().toISOString(),
+          })
         );
 
         // Build unsubscribe URL
@@ -58,7 +76,7 @@ export default {
           normalizedEmail
         )}&token=${token}`;
 
-        // Send confirmation email via Resend
+        // Send confirmation email via Resend in the detected language
         const emailResponse = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
@@ -68,8 +86,8 @@ export default {
           body: JSON.stringify({
             from: env.SENDER_EMAIL,
             to: normalizedEmail,
-            subject: "Καλώς ήρθες στη Solne!",
-            html: welcomeHtml({ heroUrl: HERO_URL, unsubUrl }),
+            subject: getSubject(lang),
+            html: welcomeHtml({ heroUrl: HERO_URL, unsubUrl, lang }),
             headers: {
               "List-Unsubscribe": `<${unsubUrl}>`,
               "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -85,7 +103,7 @@ export default {
           });
         }
 
-        return new Response(JSON.stringify({ success: true, message: "Subscribed successfully" }), {
+        return new Response(JSON.stringify({ success: true, message: "Subscribed successfully", lang }), {
           status: 200,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
@@ -104,39 +122,31 @@ export default {
       const ok = email && token === (await sign(email, env.UNSUBSCRIBE_SECRET));
 
       if (!ok) {
-        return new Response("Μη έγκυρος σύνδεσμος.", { status: 400 });
+        return new Response(getUnsubInvalid(), { status: 400 });
+      }
+
+      // Look up the subscriber's stored language preference
+      let lang = "el";
+      try {
+        const stored = await env.SOLNE_SUBSCRIBERS.get(`subscriber:${email}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.lang) lang = parsed.lang;
+        }
+      } catch (e) {
+        // fall back to default language
       }
 
       if (request.method === "POST") {
         await env.SOLNE_SUBSCRIBERS.delete(`subscriber:${email}`);
-        return new Response("Διαγράφηκες από τη λίστα.", {
+        return new Response(getUnsubDone(lang), {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
 
-      return new Response(
-        `<!doctype html>
-<html lang="el">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Διαγραφή από το newsletter της Solne</title>
-<style>
-body{margin:0;background:#d9d7d2;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh}
-.box{background:#f2f0ec;padding:40px;max-width:420px;text-align:center;border-radius:8px}
-button{background:#1a1a1a;color:#f2f0ec;border:0;padding:14px 28px;font-size:16px;cursor:pointer;border-radius:4px}
-</style>
-</head>
-<body>
-<div class="box">
-<h1>Διαγραφή από τη λίστα</h1>
-<p>Επιβεβαίωσε ότι θέλεις να διαγραφείς <strong>${email}</strong> από το newsletter της Solne.</p>
-<form method="POST"><button>Επιβεβαίωση διαγραφής</button></form>
-</div>
-</body>
-</html>`,
-        { headers: { "Content-Type": "text/html; charset=utf-8" } }
-      );
+      return new Response(unsubPageHtml({ email, lang }), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     return new Response(JSON.stringify({ error: "Not found" }), {
